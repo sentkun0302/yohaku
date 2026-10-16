@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17151b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="余白">
+<link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon-192.png">
+<title>余白 — 資金繰りノート</title>
+<style>
+:root{--bg:#17151b;--card:#211e29;--line:#322e3d;--tx:#e9e6f2;--mu:#9a95ab;--acc:#a78bfa;--in:#5eead4;--out:#fb7185}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.5 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;padding:env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom))}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:8px 0 2px}h2{font-size:15px;margin:22px 0 8px;color:var(--mu);font-weight:600}
+.sub{color:var(--mu);font-size:13px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.card .l{color:var(--mu);font-size:12px}.card .v{font-size:21px;font-weight:700;margin-top:2px}
+.in{color:var(--in)}.out{color:var(--out)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 14px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer}
+.row small{color:var(--mu);display:block}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mu)}
+.badge.完了{color:var(--in);border-color:var(--in)}.badge.確定{color:var(--acc);border-color:var(--acc)}
+button,select,input{font:inherit;color:var(--tx)}
+button{background:var(--acc);color:#17151b;border:0;border-radius:10px;padding:9px 14px;font-weight:600}
+button.g{background:var(--card);color:var(--tx);border:1px solid var(--line)}
+button.d{background:var(--out)}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.seg button{background:var(--card);color:var(--mu);border:1px solid var(--line)}.seg button.on{background:var(--acc);color:#17151b}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#1d1a24;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav a{flex:1;text-align:center;padding:9px 0 8px;font-size:11px;color:var(--mu);text-decoration:none}
+nav a b{display:block;font-size:17px}nav a.on{color:var(--acc)}
+dialog{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:16px;width:min(92vw,420px);padding:18px}
+dialog::backdrop{background:#000a}
+label{display:block;font-size:12px;color:var(--mu);margin-top:10px}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:3px}
+.mb{display:flex;align-items:flex-end;gap:6px;height:110px}
+.mb div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px;height:100%;font-size:10px;color:var(--mu)}
+.mb i{display:block;width:45%;border-radius:3px 3px 0 0;min-height:1px}
+.mb span{display:flex;align-items:flex-end;gap:2px;width:100%;justify-content:center;flex:1}
+.note{font-size:12px;color:var(--mu);margin-top:10px}
+</style></head><body>
+<main id="app"></main>
+<nav id="nav"></nav>
+<dialog id="dlg"></dialog>
+<input type="file" id="file" accept=".json" hidden>
+<script>
+const KEY='yohaku-v1';
+let db=JSON.parse(localStorage.getItem(KEY)||'null')||{accounts:[],tx:[],emps:[],salary:[],shifts:[],loans:[],set:{pay:'prev',due:'next'}};
+db.shifts??=[];db.set??={pay:'prev',due:'next'};
+const save=()=>localStorage.setItem(KEY,JSON.stringify(db));
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const yen=n=>(n<0?'-':'')+'¥'+Math.abs(Math.round(n)).toLocaleString('ja-JP');
+const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const parse=s=>{const[a,b,c]=s.split('-').map(Number);return new Date(a,b-1,c)};
+const sod=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate());
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
+const md=d=>(d.getMonth()+1)+'/'+d.getDate();
+// 内閣府公表の国民の祝日・休日（2026・2027）
+const HOL=new Set(`2026-01-01 2026-01-12 2026-02-11 2026-02-23 2026-03-20 2026-04-29 2026-05-03 2026-05-04 2026-05-05 2026-05-06 2026-07-20 2026-08-11 2026-09-21 2026-09-22 2026-09-23 2026-10-12 2026-11-03 2026-11-23
+2027-01-01 2027-01-11 2027-02-11 2027-02-23 2027-03-21 2027-03-22 2027-04-29 2027-05-03 2027-05-04 2027-05-05 2027-07-19 2027-08-11 2027-09-20 2027-09-23 2027-10-11 2027-11-03 2027-11-23`.split(/\s+/));
+const biz=d=>d.getDay()%6!==0&&!HOL.has(iso(d));
+function adj(d,mode){if(mode==='none')return d;let x=new Date(d);const s=mode==='prev'?-1:1;while(!biz(x))x=addDays(x,s);return x}
+const net=s=>(+s.gross||0)-(+s.tax||0)-(+s.ins||0)-(+s.other||0);
+const empName=id=>(db.emps.find(e=>e.id===id)||{}).name;
+const today=()=>sod(new Date());
+
+function payDate(e,d){const nx=e.close==='eom'||d.getDate()>15,mm=d.getMonth()+(nx?1:0),last=new Date(d.getFullYear(),mm+1,0).getDate();return new Date(d.getFullYear(),mm,e.payday==='eom'?last:Math.min(+e.payday||1,last))}
+function shiftAmt(s){if(s.amt!==''&&s.amt!=null)return+s.amt;const e=db.emps.find(x=>x.id===s.emp)||{},d=parse(s.date);if(s.type.includes('当直')&&+e.rateD)return+e.rateD;if(!biz(d)&&+e.rateH)return+e.rateH;return+e.rate||0}
+function shiftPays(){const m={};db.shifts.forEach(s=>{const e=db.emps.find(x=>x.id===s.emp);if(!e||!e.close)return;const raw=payDate(e,parse(s.date));(m[e.id+iso(raw)]??={e,raw,amt:0}).amt+=shiftAmt(s)});return Object.values(m)}
+const baseD=()=>db.set.base?parse(db.set.base):null;
+function events(from,to,done){
+  const ev=[];
+  db.tx.forEach(t=>{const d=parse(t.date);if(d>=from&&d<=to&&(done||t.status!=='完了'))ev.push({d,amt:+t.amt,label:t.label,k:'tx'})});
+  db.salary.forEach(s=>{const d=adj(parse(s.date),db.set.pay);if(d>=from&&d<=to&&(done||s.status!=='完了'))ev.push({d,amt:net(s),label:(empName(s.emp)||'給与')+' 給与',k:'sal'})});
+  const b0=baseD();shiftPays().forEach(p=>{if(b0&&p.raw<=b0)return;const d=adj(p.raw,db.set.pay);if(d>=from&&d<=to)ev.push({d,amt:p.amt,label:p.e.name+' 給与',k:'shift'})});
+  const t0=b0?addDays(b0,1):today();
+  db.loans.forEach(l=>{let bal=+l.bal;const r=+l.rate/1200;if(!(+l.pay>0))return;
+    for(let i=0;i<600&&bal>0.5;i++){const b=new Date(t0.getFullYear(),t0.getMonth()+i,1);
+      const dim=new Date(b.getFullYear(),b.getMonth()+1,0).getDate();
+      const d=adj(new Date(b.getFullYear(),b.getMonth(),Math.min(+l.day||1,dim)),db.set.due);
+      if(d<t0)continue;if(d>to)break;
+      const k=iso(b).slice(0,7),o=(l.ovs||'').split(',').map(x=>x.trim().split(':')).find(x=>x[0]===k),pm=o?+o[1]:+l.pay,it=bal*r,due=Math.min(pm,bal+it);bal+=it-due;
+      if(d>=from)ev.push({d,amt:-due,label:l.name+' 返済',k:'loan'})}});
+  return ev.sort((a,b)=>a.d-b.d||b.amt-a.amt);
+}
+const balanceNow=()=>db.accounts.reduce((a,c)=>a+(+c.start||0),0)
+  +db.tx.filter(t=>t.status==='完了').reduce((a,t)=>a+(+t.amt||0),0)
+  +db.salary.filter(s=>s.status==='完了').reduce((a,s)=>a+net(s),0)+pastAuto();
+function pastAuto(){const b=baseD();return b?events(addDays(b,1),addDays(today(),-1),false).filter(e=>e.k==='loan'||e.k==='shift').reduce((a,e)=>a+e.amt,0):0}
+function sim(l){let bal=+l.bal,r=+l.rate/1200,n=0,int=0;
+  while(bal>0.5&&n<1200){const i=bal*r,due=Math.min(+l.pay,bal+i);if(due<=i&&bal>0.5&&+l.pay<=i)return null;bal+=i-due;int+=i;n++}
+  return{n,int}}
+
+// ---- forms ----
+const accOpts=()=>db.accounts.map(a=>[a.id,a.name]);
+const F={
+ acc:{c:'accounts',t:'口座',f:[['name','口座名','text'],['start','開始残高（基準日時点の実残高）','number'],['date','基準日','date']]},
+ tx:{c:'tx',t:'取引',f:[['acc','口座','select',accOpts],['date','日付','date'],['label','内容','text'],['amt','金額（入金は＋、支出は−）','number'],['status','状態','select',()=>['予定','金額確定','完了'].map(x=>[x==='金額確定'?'確定':x,x])]]},
+ emp:{c:'emps',t:'勤務先',f:[['name','勤務先名','text'],['close','締め日','select',()=>[['eom','月末締め'],['15','15日締め']]],['payday','支払日（数字／eom＝月末）','text'],['rate','通常の単価（手取り）','number'],['rateH','土日祝の単価（任意）','number'],['rateD','日当直の単価（任意）','number'],['note','メモ','text']]},
+ shift:{c:'shifts',t:'勤務日',f:[['date','日付','date'],['emp','勤務先','select',()=>db.emps.filter(e=>e.close).map(e=>[e.id,e.name])],['type','種別','select',()=>['通常','日当直','当直'].map(x=>[x,x])],['amt','金額を直接指定（任意・空欄で自動）','number']]},
+ sal:{c:'salary',t:'給与見込',f:[['emp','勤務先','select',()=>db.emps.map(e=>[e.id,e.name])],['date','入金予定日','date'],['gross','額面給与','number'],['tax','所得税など','number'],['ins','社会保険料','number'],['other','その他控除','number'],['status','状態','select',()=>[['予定','予定'],['完了','完了']]]]},
+ loan:{c:'loans',t:'借入',f:[['name','借入先','text'],['bal','現在の残債','number'],['rate','年利（%）','number'],['pay','毎月の返済額','number'],['day','毎月の返済日（31＝月末）','number'],['ovs','月別の返済額上書き（例 2026-10:60000,2026-11:180000）','text']]}
+};
+function openForm(key,id){
+  const d=F[key],item=id?db[d.c].find(x=>x.id===id):{};const dlg=document.getElementById('dlg');
+  dlg.innerHTML=`<h1>${d.t}を${id?'編集':'追加'}</h1><form method="dialog" id="fm">`+d.f.map(([k,l,t,o])=>{
+    const v=item[k]??(t==='date'?iso(today()):'');
+    return `<label>${l}${t==='select'?`<select name="${k}">${o().map(([a,b])=>`<option value="${a}" ${a===v?'selected':''}>${esc(b)}</option>`).join('')}</select>`:`<input name="${k}" type="${t}" value="${esc(v)}" ${t==='number'?'step="any" inputmode="decimal"':''}>`}</label>`}).join('')
+    +`<div class="bar" style="margin-top:16px"><button>保存</button><button type="button" class="g" id="cx">キャンセル</button>${id?'<button type="button" class="d" id="del">削除</button>':''}</div></form>`;
+  dlg.showModal();
+  document.getElementById('cx').onclick=()=>dlg.close();
+  if(id)document.getElementById('del').onclick=()=>{if(confirm('削除しますか？')){db[d.c]=db[d.c].filter(x=>x.id!==id);save();dlg.close();render()}};
+  document.getElementById('fm').onsubmit=e=>{const o={};new FormData(e.target).forEach((v,k)=>o[k]=v);
+    if(id)Object.assign(item,o);else db[d.c].push({id:uid(),...o});save();render()};
+}
+
+// ---- views ----
+let view='dash',range=180;
+const TABS=[['dash','◫','ホーム'],['tx','▤','取引'],['work','◷','勤務'],['debt','↘','借入'],['fc','⌁','予測'],['set','⚙','設定']];
+const sum=(a,f)=>a.reduce((x,y)=>x+f(y),0);
+const evRow=e=>`<div class="row" style="cursor:default"><div>${esc(e.label)}<small>${md(e.d)}</small></div><b class="${e.amt<0?'out':'in'}">${yen(e.amt)}</b></div>`;
+const V={
+dash(){if(!db.accounts.length)return `<h1>余白</h1><p class="sub">はじめに初期データ（JSON）を読み込むか、口座を追加してください。</p><div class="bar"><button id="ijson">JSONを読み込む</button><button class="g" data-add="acc">＋ 口座を追加</button></div>`;const t=today(),ms=new Date(t.getFullYear(),t.getMonth(),1),me=new Date(t.getFullYear(),t.getMonth()+1,0);
+  const ev=events(ms,me,true);const inc=sum(ev.filter(e=>e.amt>0),e=>e.amt),out=-sum(ev.filter(e=>e.amt<0),e=>e.amt);
+  const months=[...Array(6)].map((_,i)=>{const a=new Date(t.getFullYear(),t.getMonth()+i,1),b=new Date(a.getFullYear(),a.getMonth()+1,0),e=events(a,b,true);
+    return{m:a.getMonth()+1,i:sum(e.filter(x=>x.amt>0),x=>x.amt),o:-sum(e.filter(x=>x.amt<0),x=>x.amt)}});
+  const mx=Math.max(1,...months.map(m=>Math.max(m.i,m.o)));
+  return `<h1>ダッシュボード</h1><p class="sub">${t.getFullYear()}年${t.getMonth()+1}月${t.getDate()}日</p>
+  <div class="grid"><div class="card"><div class="l">現在の資産残高</div><div class="v">${yen(balanceNow())}</div></div>
+  <div class="card"><div class="l">借入残高</div><div class="v">${yen(sum(db.loans,l=>+l.bal))}</div></div>
+  <div class="card"><div class="l">今月の入金見込</div><div class="v in">${yen(inc)}</div></div>
+  <div class="card"><div class="l">今月の支出予定</div><div class="v out">${yen(out)}</div></div></div>
+  <h2>月ごとの収支（<span class="in">入金</span>／<span class="out">支出</span>）</h2><div class="card"><div class="mb">${months.map(m=>`<div><span><i style="height:${m.i/mx*100}%;background:var(--in)"></i><i style="height:${m.o/mx*100}%;background:var(--out)"></i></span>${m.m}月</div>`).join('')}</div></div>
+  <h2>今後の入出金予定</h2>${events(t,addDays(t,90),false).slice(0,10).map(evRow).join('')||'<p class="sub">予定がありません</p>'}`},
+tx(){const fl=window.stf||'';const L=db.tx.filter(t=>!fl||t.status===fl).sort((a,b)=>b.date.localeCompare(a.date));
+  return `<h1>口座・取引</h1><p class="sub">開始残高は基準日時点の実残高。以後の取引だけを登録します。</p>
+  <div class="bar"><button data-add="acc">＋ 口座</button><button data-add="tx" class="g">＋ 取引</button></div>
+  <h2>口座一覧</h2>${db.accounts.map(a=>`<div class="row" data-edit="acc" data-id="${a.id}"><div>${esc(a.name)}<small>基準日 ${a.date}</small></div><b>${yen(+a.start+sum(db.tx.filter(t=>t.acc===a.id&&t.status==='完了'),t=>+t.amt))}</b></div>`).join('')||'<p class="sub">口座を追加してください</p>'}
+  <h2>最近の取引</h2><div class="bar seg">${['','予定','確定','完了'].map(s=>`<button class="${fl===s?'on':''}" data-stf="${s}">${s||'すべて'}</button>`).join('')}</div>
+  ${L.map(t=>`<div class="row" data-edit="tx" data-id="${t.id}"><div>${esc(t.label)}<small>${t.date} <span class="badge ${t.status}">${t.status}</span></small></div><b class="${t.amt<0?'out':'in'}">${yen(+t.amt)}</b></div>`).join('')}`},
+work(){const t=today(),L=[...db.shifts].filter(x=>parse(x.date)>=addDays(t,-7)).sort((a,b)=>a.date.localeCompare(b.date));
+  return `<h1>勤務・給与</h1><p class="sub">勤務日を登録すると、勤務先の締め日・支払日・単価から入金予定が自動で作られます。</p>
+  <div class="bar"><button data-add="shift">＋ 勤務日</button><button data-add="sal" class="g">＋ 給与見込</button><button data-add="emp" class="g">＋ 勤務先</button></div>
+  <h2>勤務予定</h2>${L.map(x=>{const d=parse(x.date),e=db.emps.find(y=>y.id===x.emp)||{};return `<div class="row" data-edit="shift" data-id="${x.id}"><div>${md(d)}(${'日月火水木金土'[d.getDay()]}) ${esc(e.name)} ${x.type!=='通常'?`<span class="badge">${x.type}</span>`:''}<small>入金 ${e.close?md(adj(payDate(e,d),db.set.pay)):'—'}</small></div><b class="in">${yen(shiftAmt(x))}</b></div>`}).join('')||'<p class="sub">勤務日を追加してください</p>'}
+  <h2>給与見込（常勤など）</h2>${[...db.salary].sort((a,b)=>b.date.localeCompare(a.date)).map(x=>`<div class="row" data-edit="sal" data-id="${x.id}"><div>${esc(empName(x.emp)||'—')}<small>${x.date} 額面${yen(+x.gross)} <span class="badge ${x.status}">${x.status}</span></small></div><b class="in">${yen(net(x))}</b></div>`).join('')}
+  <h2>勤務先</h2>${db.emps.map(e=>`<div class="row" data-edit="emp" data-id="${e.id}"><div>${esc(e.name)}<small>${e.close?(e.close==='eom'?'月末締':'15日締')+'・'+(e.payday==='eom'?'月末':e.payday+'日')+'払い':esc(e.note)}</small></div>${+e.rate?`<b>${yen(+e.rate)}</b>`:''}</div>`).join('')}`},
+debt(){return `<h1>借入・返済</h1><p class="sub">登録条件に基づく試算です。契約先の返済予定と照合してください。</p>
+  <div class="bar"><button data-add="loan">＋ 借入</button></div>
+  ${db.loans.map(l=>{const s=sim(l);return `<div class="row" data-edit="loan" data-id="${l.id}"><div>${esc(l.name)}<small>年利${l.rate}% ／ 毎月${yen(+l.pay)}（${l.day}日）<br>${s?`完済まで約${s.n}か月・利息計${yen(s.int)}`:'返済額が利息を下回っています'}</small></div><b>${yen(+l.bal)}</b></div>`}).join('')||'<p class="sub">借入を登録すると返済シミュレーションを表示します。</p>'}`},
+fc(){const t=today(),e=events(t,addDays(t,range),false);let bal=balanceNow(),pts=[[0,bal]];const byDay={};e.forEach(x=>(byDay[iso(x.d)]??=[]).push(x));
+  for(let i=1;i<=range;i++){(byDay[iso(addDays(t,i))]||[]).forEach(x=>bal+=x.amt);pts.push([i,bal])}
+  (byDay[iso(t)]||[]).forEach(x=>pts[0][1]+=x.amt);
+  const ys=pts.map(p=>p[1]),mn=Math.min(...ys,0),mx=Math.max(...ys,1),W=600,H=180,X=i=>i/range*W,Y=v=>H-(v-mn)/(mx-mn||1)*H;
+  const mi=pts.reduce((a,p)=>p[1]<a[1]?p:a);
+  return `<h1>資金繰り予測</h1><p class="sub">同日は入金後に支出を反映。金融機関の実際の決済順序は確認してください。</p>
+  <div class="bar seg">${[30,60,90,180].map(r=>`<button class="${range===r?'on':''}" data-r="${r}">${r===180?'6か月':r+'日'}</button>`).join('')}</div>
+  <div class="card"><svg viewBox="0 0 ${W} ${H}" width="100%"><line x1="0" x2="${W}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--line)"/><polyline fill="none" stroke="var(--acc)" stroke-width="2" points="${pts.map(p=>X(p[0])+','+Y(p[1])).join(' ')}"/></svg>
+  <div class="l">最低残高 <b class="${mi[1]<0?'out':''}">${yen(mi[1])}</b>（${md(addDays(t,mi[0]))}）／ 期末 ${yen(pts.at(-1)[1])}</div></div>
+  <h2>予定一覧</h2>${e.map(evRow).join('')||'<p class="sub">予定がありません</p>'}`},
+set(){const o=(k,v)=>`<select data-set="${k}">${[['none','調整しない'],['prev','前営業日に前倒し'],['next','翌営業日に後ろ倒し']].map(([a,b])=>`<option value="${a}" ${db.set[k]===a?'selected':''}>${b}</option>`).join('')}</select>`;
+  return `<h1>設定・データ</h1><h2>休日設定</h2><div class="card"><p class="sub">内閣府公表の2026・2027年の祝日と土日を休日として扱います。2028年以降は更新が必要です。</p>
+  <label>給料日${o('pay')}</label><label>支払日・返済日${o('due')}</label><label>残高の基準日（これ以降の入出金を残高に自動反映）<input type="date" data-set="base" value="${db.set.base||''}"></label></div>
+  <h2>バックアップ</h2><div class="bar"><button class="g" id="ecsv">取引CSV</button><button class="g" id="ejson">JSON書き出し</button><button class="g" id="ijson">JSON復元</button><button class="d" id="rst">初期化</button></div>
+  <p class="note">データはこの端末のブラウザ内にのみ保存されます。定期的にJSONを書き出して安全な場所に保管してください。</p>`}
+};
+function dl(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()}
+function render(){document.getElementById('dlg').close?.();
+  document.getElementById('nav').innerHTML=TABS.map(([k,i,l])=>`<a href="#${k}" class="${view===k?'on':''}"><b>${i}</b>${l}</a>`).join('');
+  document.getElementById('app').innerHTML=V[view]()}
+document.addEventListener('click',e=>{const q=s=>e.target.closest(s);let x;
+  if(x=q('[data-add]'))openForm(x.dataset.add);
+  else if(x=q('[data-edit]'))openForm(x.dataset.edit,x.dataset.id);
+  else if(x=q('[data-stf]')){window.stf=x.dataset.stf;render()}
+  else if(x=q('[data-r]')){range=+x.dataset.r;render()}
+  else if(q('#ecsv'))dl('transactions.csv','日付,内容,金額,状態\n'+db.tx.map(t=>[t.date,'"'+t.label+'"',t.amt,t.status].join(',')).join('\n'),'text/csv');
+  else if(q('#ejson'))dl('yohaku-backup-'+iso(today())+'.json',JSON.stringify(db),'application/json');
+  else if(q('#ijson'))document.getElementById('file').click();
+  else if(q('#rst')&&confirm('全データを削除します。よろしいですか？')){db={accounts:[],tx:[],emps:[],salary:[],shifts:[],loans:[],set:{pay:'prev',due:'next'}};save();render()}});
+document.addEventListener('change',e=>{if(e.target.dataset.set){db.set[e.target.dataset.set]=e.target.value;save()}});
+document.getElementById('file').onchange=async e=>{try{const j=JSON.parse(await e.target.files[0].text());if(!j.accounts||!j.tx)throw 0;db=j;save();render()}catch{alert('読み込めないファイルです')}};
+addEventListener('hashchange',()=>{view=location.hash.slice(1)||'dash';render()});
+view=location.hash.slice(1)||'dash';render();
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+</script></body></html>
